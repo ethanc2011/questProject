@@ -12,9 +12,11 @@ ball_positions = []
 ball_boxes = []
 racket_boxes = []
 person_boxes = []
+initialized = False
 paused = False
 MAX_TRAIL_LENGTH = 30
 frames = []  # Add this line to store frames
+line_coordinates = None
 
 # Load YOLOv8 model
 model = YOLO("yolov8m.pt")  # Ensure you have the correct YOLOv8 model (adjust the model filename accordingly)
@@ -56,7 +58,7 @@ def fit_quadratic(x_data, y_data):
     # Calculate R-squared score
     r2_score = model.score(X_poly, y_data)
     
-    return model, poly_features, r2_score
+    return model, poly_features
 
 def calculateBounce(ball_positions):
     if not ball_positions:
@@ -98,8 +100,8 @@ def calculateBounce(ball_positions):
 
         try:
             # Fit both segments
-            model_before, poly_before, _ = fit_quadratic(x_before, y_before)
-            model_after, poly_after, _ = fit_quadratic(x_after, y_after)
+            model_before, poly_before = fit_quadratic(x_before, y_before)
+            model_after, poly_after = fit_quadratic(x_after, y_after)
             
             # Use the correct variable names here
             y_predicted_before = model_before.predict(poly_before.transform(x_before))
@@ -133,14 +135,14 @@ def getIntersection(ball_positions, best_bounce_index, frame):
 
     # Convert ball_positions to numpy array and separate x and y coordinates
     positions = np.array(ball_positions)
-    x_before = positions[:best_bounce_index+1, 0].reshape(-1, 1)  # Reshape for sklearn
+    x_before = positions[:best_bounce_index+1, 0].reshape(-1, 1)
     y_before = positions[:best_bounce_index+1, 1].reshape(-1, 1)
     x_after = positions[best_bounce_index:, 0].reshape(-1, 1)
     y_after = positions[best_bounce_index:, 1].reshape(-1, 1)
 
     # Fit quadratic functions with optimal bounce point
-    model_before, poly_before, r2_before = fit_quadratic(x_before, y_before)
-    model_after, poly_after, r2_after = fit_quadratic(x_after, y_after)
+    model_before, poly_before = fit_quadratic(x_before, y_before)
+    model_after, poly_after = fit_quadratic(x_after, y_after)
 
     # Get quadratic coefficients from the model
     a1 = model_before.coef_[0][2]  # coefficient for x²
@@ -251,6 +253,50 @@ def detectContact(racket_box, ball_box, person_box):
             print("contact detected")
             return True
 
+def mouse_callback(event, x, y, flags, param):
+    global points, image_copy
+    
+    if event == cv2.EVENT_LBUTTONDOWN:
+        # Store the clicked point
+        points.append((x, y))
+        
+        # Draw the point
+        cv2.circle(image_copy, (x, y), 5, (0, 0, 255), -1)
+        
+        # If we have two points, draw the line
+        if len(points) == 2:
+            cv2.line(image_copy, points[0], points[1], (0, 255, 0), 2)
+            print(f"Line coordinates: Point 1 {points[0]}, Point 2 {points[1]}")
+
+def draw_line(frame):
+    global points, image_copy
+    
+    # Use the provided video frame instead of loading from file
+    image = frame.copy()
+    
+    # Initialize image copy and points list
+    image_copy = image.copy()
+    points = []
+    
+    # Create window and set mouse callback
+    cv2.namedWindow('Draw Line')
+    cv2.setMouseCallback('Draw Line', mouse_callback)
+    
+    while True:
+        cv2.imshow('Draw Line', image_copy)
+        
+        # Break the loop when 'q' is pressed
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+        
+        # Reset when 'r' is pressed
+        if cv2.waitKey(1) & 0xFF == ord('r'):
+            image_copy = image.copy()
+            points = []
+    
+    cv2.destroyAllWindows()
+    return points if len(points) == 2 else None
+
 # Check if the video file opened successfully
 if not cap.isOpened():
     print(f"Error: Could not open video file at {video_path}")
@@ -263,62 +309,75 @@ def toggle_pause():
 
 # Process video frame by frame
 while (detectContact(racket_boxes, ball_boxes, person_boxes) == None):
-    if not paused:
+    if not initialized:
         ret, frame = cap.read()
-        if not ret:
-            break
+        if ret:
+            line_coordinates = draw_line(frame)  # Store the line coordinates
+            if line_coordinates:
+                print("Final line coordinates:", line_coordinates)
+            initialized = True
+        continue
+    
+    ret, frame = cap.read()
+    if not ret:
+        break
 
-        # Store a copy of the frame
-        frames.append(frame.copy())
-        
-        # Run object detection using YOLOv8
-        results = model(frame, device = "mps", verbose = False)  # YOLOv8 automatically processes the image
+    # Store a copy of the frame
+    frames.append(frame.copy())
+    
+    # Run object detection using YOLOv8
+    results = model(frame, device = "mps", verbose = False)
 
-        if len(ball_positions) > 0:  # Only append if it's a new position
-            last_pos = ball_positions[-1]
-            if (center_x, center_y) != last_pos:  # Avoid duplicate positions
+    # Draw the stored line on each frame
+    if len(line_coordinates) == 2:
+        cv2.line(frame, line_coordinates[0], line_coordinates[1], (0, 255, 0), 2)
+
+    if len(ball_positions) > 0:  # Only append if it's a new position
+        last_pos = ball_positions[-1]
+        if (center_x, center_y) != last_pos:  # Avoid duplicate positions
+            ball_positions.append((center_x, center_y))
+    # Loop through detected objects and draw bounding boxes
+    for result in results:  # Loop through results for each frame
+        boxes = result.boxes  # Get boxes object for the current frame
+        for box in boxes:
+            # Get box coordinates, confidence, and class
+            xmin, ymin, xmax, ymax = box.xyxy[0].tolist()  # Get box coordinates
+            conf = box.conf[0].item()  # Get confidence score
+            cls = box.cls[0].item()  # Get class index
+
+            # Check if the detected object is a tennis ball (adjust class index if needed)
+            if conf > 0.5 and int(cls) == 32:  # Assuming '32' is the tennis ball class
+                # Get the ball's center position
+                center_x = int((xmin + xmax) / 2)
+                center_y = int((ymin + ymax) / 2)
+                
+                # Append the position to the ball_positions list
                 ball_positions.append((center_x, center_y))
-        # Loop through detected objects and draw bounding boxes
-        for result in results:  # Loop through results for each frame
-            boxes = result.boxes  # Get boxes object for the current frame
-            for box in boxes:
-                # Get box coordinates, confidence, and class
-                xmin, ymin, xmax, ymax = box.xyxy[0].tolist()  # Get box coordinates
-                conf = box.conf[0].item()  # Get confidence score
-                cls = box.cls[0].item()  # Get class index
+                print("detected during video: ", center_x, center_y)
+                ball_boxes = [xmin, ymin, xmax, ymax]
 
-                # Check if the detected object is a tennis ball (adjust class index if needed)
-                if conf > 0.5 and int(cls) == 32:  # Assuming '32' is the tennis ball class
-                    # Get the ball's center position
-                    center_x = int((xmin + xmax) / 2)
-                    center_y = int((ymin + ymax) / 2)
-                    
-                    # Append the position to the ball_positions list
-                    ball_positions.append((center_x, center_y))
-                    print("detected during video: ", center_x, center_y)
-                    ball_boxes = [xmin, ymin, xmax, ymax]
+                # Draw bounding box
+                cv2.rectangle(frame, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (255, 0, 0), 2)
 
-                    # Draw bounding box
-                    cv2.rectangle(frame, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (255, 0, 0), 2)
+                # Display class label (change if necessary)
+                label = f'{model.names[int(cls)]}: {conf:.2f}'
+                cv2.putText(frame, label, (int(xmin), int(ymin) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+            if conf > 0.5 and int(cls) == 38:
+                racket_boxes = [xmin, ymin, xmax, ymax]
+                cv2.rectangle(frame, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (0, 255, 0), 2)
+                cv2.putText(frame, f'Tennis Racket: {conf:.2f}', (int(xmin), int(ymin - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+            if conf > 0.5 and int(cls) == 0:
+                person_boxes = [xmin, ymin, xmax, ymax]
+                cv2.rectangle(frame, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (0, 255, 0), 2)
+                cv2.putText(frame, f'person: {conf:.2f}', (int(xmin), int(ymin - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+    
+    print(detectContact(racket_boxes, ball_boxes, person_boxes))
 
-                    # Display class label (change if necessary)
-                    label = f'{model.names[int(cls)]}: {conf:.2f}'
-                    cv2.putText(frame, label, (int(xmin), int(ymin) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
-                if conf > 0.5 and int(cls) == 38:
-                    racket_boxes = [xmin, ymin, xmax, ymax]
-                    cv2.rectangle(frame, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (0, 255, 0), 2)
-                    cv2.putText(frame, f'Tennis Racket: {conf:.2f}', (int(xmin), int(ymin - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
-                if conf > 0.5 and int(cls) == 0:
-                    person_boxes = [xmin, ymin, xmax, ymax]
-                    cv2.rectangle(frame, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (0, 255, 0), 2)
-                    cv2.putText(frame, f'person: {conf:.2f}', (int(xmin), int(ymin - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
-        
-        print(detectContact(racket_boxes, ball_boxes, person_boxes))
+    for i in range(1, len(ball_positions)):
+        cv2.line(frame, ball_positions[i-1], ball_positions[i], (0, 255, 0), 2)
 
-        for i in range(1, len(ball_positions)):
-            cv2.line(frame, ball_positions[i-1], ball_positions[i], (0, 255, 0), 2)
-
-        cv2.imshow('Tennis Ball Tracking', frame)
+    cv2.imshow('Tennis Ball Tracking', frame)
+    
 
     key = cv2.waitKey(1) & 0xFF
     if key == ord('q'):
