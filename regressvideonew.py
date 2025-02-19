@@ -22,7 +22,7 @@ line_coordinates = None
 model = YOLO("yolov8m.pt")  # Ensure you have the correct YOLOv8 model (adjust the model filename accordingly)
 
 # Path to the tennis video (replace with your actual video path)
-video_path = '/Users/ethancai/Downloads/grigor.mp4'
+video_path = '/Users/ethancai/Downloads/grigor1.mp4'
 
 # Open the video file using OpenCV
 cap = cv2.VideoCapture(video_path)
@@ -297,6 +297,20 @@ def draw_line(frame):
     cv2.destroyAllWindows()
     return points if len(points) == 2 else None
 
+def inOrOut(point1, point2, bounce_point):
+    x1 = point1[0]
+    y1 = point1[1]
+    x2 = point2[0]
+    y2 = point2[1]
+    bouncex = bounce_point[0]
+    bouncey = bounce_point[1]
+    m = (y1-y2)/(x1-x2)
+    b = y1-m*x1
+    liney = m*bouncex+b
+    if(bouncey<=liney):
+        return True
+    else:
+        return False
 # Check if the video file opened successfully
 if not cap.isOpened():
     print(f"Error: Could not open video file at {video_path}")
@@ -385,12 +399,9 @@ while (detectContact(racket_boxes, ball_boxes, person_boxes) == None):
     elif key != 255:
         toggle_pause()
 
-
-
 # After the video loop ends
 print("Video loop ended")
 print(f"Total ball positions collected: {len(ball_positions)}")
-
 
 
 if len(ball_positions) >= 6:  # Minimum required for analysis
@@ -403,6 +414,10 @@ if len(ball_positions) >= 6:  # Minimum required for analysis
 
     intersection_x, intersection_y = getIntersection(ball_positions, best_bounce_index, bounce_frame)
     print(f"Bounce index calculated: {best_bounce_index}")
+    point1, point2 = points[0], points[1]
+    bounce = (intersection_x, intersection_y)
+    result = inOrOut(point1, point2, bounce)
+    print("In =", result)
 
     if best_bounce_index > 0:  # Only proceed if a bounce was found
         print("Valid bounce found, creating plot...")
