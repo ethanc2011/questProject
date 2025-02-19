@@ -9,6 +9,9 @@ import matplotlib.pyplot as plt
 from ultralytics import YOLO
 
 ball_positions = []
+ball_boxes = []
+racket_boxes = []
+person_boxes = []
 paused = False
 MAX_TRAIL_LENGTH = 30
 frames = []  # Add this line to store frames
@@ -17,7 +20,7 @@ frames = []  # Add this line to store frames
 model = YOLO("yolov8m.pt")  # Ensure you have the correct YOLOv8 model (adjust the model filename accordingly)
 
 # Path to the tennis video (replace with your actual video path)
-video_path = '/Users/ethancai/Downloads/grigor1.mp4'
+video_path = '/Users/ethancai/Downloads/grigor.mp4'
 
 # Open the video file using OpenCV
 cap = cv2.VideoCapture(video_path)
@@ -124,6 +127,9 @@ def calculateBounce(ball_positions):
 
 def getIntersection(ball_positions, best_bounce_index, frame):
     print("starting intersection")
+    print("ball_positions size: ", len(ball_positions))
+    print("best_bounce_index", best_bounce_index)
+    
 
     # Convert ball_positions to numpy array and separate x and y coordinates
     positions = np.array(ball_positions)
@@ -212,6 +218,39 @@ def getIntersection(ball_positions, best_bounce_index, frame):
     
     return None, None  # Return None if no intersection is found
 
+def calculate_iou(boxA, boxB):
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+
+    interWidth = max(0, xB - xA)
+    interHeight = max(0, yB - yA)
+    interArea = interWidth * interHeight
+
+    boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+    boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+    
+    if (boxAArea > boxBArea):
+        iou = interArea / boxBArea if boxBArea != 0 else 0
+    else: 
+        iou = interArea / boxAArea if boxAArea != 0 else 0
+
+    return iou
+
+
+def detectContact(racket_box, ball_box, person_box):
+    if racket_box and ball_box:
+        iou_ball = calculate_iou(racket_box, ball_box)
+        iou_racket = calculate_iou(racket_box, person_box)
+
+        print("IoU_Ball: ", iou_ball)
+        print("IoU_Racket: ", iou_racket)
+            
+        if iou_ball > 0.5 and iou_racket < 0.5:
+            print("contact detected")
+            return True
+
 # Check if the video file opened successfully
 if not cap.isOpened():
     print(f"Error: Could not open video file at {video_path}")
@@ -223,7 +262,7 @@ def toggle_pause():
     paused = not paused
 
 # Process video frame by frame
-while True:
+while (detectContact(racket_boxes, ball_boxes, person_boxes) == None):
     if not paused:
         ret, frame = cap.read()
         if not ret:
@@ -256,10 +295,8 @@ while True:
                     
                     # Append the position to the ball_positions list
                     ball_positions.append((center_x, center_y))
-
-                    # Limit the size of the ball_positions list to MAX_TRAIL_LENGTH
-                    if len(ball_positions) > MAX_TRAIL_LENGTH:
-                        ball_positions.pop(0)
+                    print("detected during video: ", center_x, center_y)
+                    ball_boxes = [xmin, ymin, xmax, ymax]
 
                     # Draw bounding box
                     cv2.rectangle(frame, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (255, 0, 0), 2)
@@ -267,10 +304,19 @@ while True:
                     # Display class label (change if necessary)
                     label = f'{model.names[int(cls)]}: {conf:.2f}'
                     cv2.putText(frame, label, (int(xmin), int(ymin) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+                if conf > 0.5 and int(cls) == 38:
+                    racket_boxes = [xmin, ymin, xmax, ymax]
+                    cv2.rectangle(frame, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (0, 255, 0), 2)
+                    cv2.putText(frame, f'Tennis Racket: {conf:.2f}', (int(xmin), int(ymin - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+                if conf > 0.5 and int(cls) == 0:
+                    person_boxes = [xmin, ymin, xmax, ymax]
+                    cv2.rectangle(frame, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (0, 255, 0), 2)
+                    cv2.putText(frame, f'person: {conf:.2f}', (int(xmin), int(ymin - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+        
+        print(detectContact(racket_boxes, ball_boxes, person_boxes))
 
-        display_positions = ball_positions[-MAX_TRAIL_LENGTH:]
-        for i in range(1, len(display_positions)):
-            cv2.line(frame, display_positions[i-1], display_positions[i], (0, 255, 0), 2)
+        for i in range(1, len(ball_positions)):
+            cv2.line(frame, ball_positions[i-1], ball_positions[i], (0, 255, 0), 2)
 
         cv2.imshow('Tennis Ball Tracking', frame)
 
@@ -311,6 +357,9 @@ if len(ball_positions) >= 6:  # Minimum required for analysis
             bally_before = positions_array[:best_bounce_index+1, 1]
             ballx_after = positions_array[best_bounce_index:, 0]
             bally_after = positions_array[best_bounce_index:, 1]
+
+            for i in range(len(positions_array)):
+                print("positions array: ", positions_array[i])
 
             print(f"Before bounce points: {len(ballx_before)}")
             print(f"After bounce points: {len(ballx_after)}")
