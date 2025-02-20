@@ -22,10 +22,13 @@ line_coordinates = None
 model = YOLO("yolov8m.pt")  # Ensure you have the correct YOLOv8 model (adjust the model filename accordingly)
 
 # Path to the tennis video (replace with your actual video path)
-video_path = '/Users/ethancai/Downloads/grigor1.mp4'
+video_path = '/Users/ethancai/Downloads/grigor.mp4'
 
 # Open the video file using OpenCV
 cap = cv2.VideoCapture(video_path)
+
+frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 def mean_square_error(y_actual, y_predicted):
     meansquarederror = 0
@@ -127,6 +130,50 @@ def calculateBounce(ball_positions):
         print("No bounce index found")
     return best_bounce_index
 
+def draw_line(frame):
+    global points, image_copy
+    
+    # Use the provided video frame instead of loading from file
+    image = frame.copy()
+    
+    # Initialize image copy and points list
+    image_copy = image.copy()
+    points = []
+    
+    # Create window and set mouse callback
+    cv2.namedWindow('Draw Line')
+    cv2.setMouseCallback('Draw Line', mouse_callback)
+    
+    while True:
+        cv2.imshow('Draw Line', image_copy)
+        
+        # Break the loop when 'q' is pressed
+        if cv2.waitKey(1) & 0xFF == ord(' '):
+            break
+        
+        # Reset when 'r' is pressed
+        if cv2.waitKey(1) & 0xFF == ord('r'):
+            image_copy = image.copy()
+            points = []
+    
+    cv2.destroyAllWindows()
+    return points if len(points) == 2 else None
+
+def inOrOut(point1, point2, bounce_point):
+    x1 = point1[0]
+    y1 = point1[1]
+    x2 = point2[0]
+    y2 = point2[1]
+    bouncex = bounce_point[0]
+    bouncey = bounce_point[1]
+    m = (y1-y2)/(x1-x2)
+    b = y1-m*x1
+    liney = m*bouncex+b
+    if(bouncey<=liney):
+        return True
+    else:
+        return False
+
 def getIntersection(ball_positions, best_bounce_index, frame):
     print("starting intersection")
     print("ball_positions size: ", len(ball_positions))
@@ -212,11 +259,8 @@ def getIntersection(ball_positions, best_bounce_index, frame):
         thickness = -1
         
         cv2.circle(frame, center_coordinates, radius, red_color, thickness)
-        cv2.imshow("Final Frame with Bounce Point", frame)
         
-        cv2.waitKey(0)
-        
-        return x_intersection, y_intersection
+        return x_intersection, y_intersection, frame
     
     return None, None  # Return None if no intersection is found
 
@@ -268,49 +312,6 @@ def mouse_callback(event, x, y, flags, param):
             cv2.line(image_copy, points[0], points[1], (0, 255, 0), 2)
             print(f"Line coordinates: Point 1 {points[0]}, Point 2 {points[1]}")
 
-def draw_line(frame):
-    global points, image_copy
-    
-    # Use the provided video frame instead of loading from file
-    image = frame.copy()
-    
-    # Initialize image copy and points list
-    image_copy = image.copy()
-    points = []
-    
-    # Create window and set mouse callback
-    cv2.namedWindow('Draw Line')
-    cv2.setMouseCallback('Draw Line', mouse_callback)
-    
-    while True:
-        cv2.imshow('Draw Line', image_copy)
-        
-        # Break the loop when 'q' is pressed
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-        
-        # Reset when 'r' is pressed
-        if cv2.waitKey(1) & 0xFF == ord('r'):
-            image_copy = image.copy()
-            points = []
-    
-    cv2.destroyAllWindows()
-    return points if len(points) == 2 else None
-
-def inOrOut(point1, point2, bounce_point):
-    x1 = point1[0]
-    y1 = point1[1]
-    x2 = point2[0]
-    y2 = point2[1]
-    bouncex = bounce_point[0]
-    bouncey = bounce_point[1]
-    m = (y1-y2)/(x1-x2)
-    b = y1-m*x1
-    liney = m*bouncex+b
-    if(bouncey<=liney):
-        return True
-    else:
-        return False
 # Check if the video file opened successfully
 if not cap.isOpened():
     print(f"Error: Could not open video file at {video_path}")
@@ -403,82 +404,19 @@ while (detectContact(racket_boxes, ball_boxes, person_boxes) == None):
 print("Video loop ended")
 print(f"Total ball positions collected: {len(ball_positions)}")
 
+best_bounce_index = calculateBounce(ball_positions)
+bounce_frame = frames[-1]
+intersection_x, intersection_y, final_frame = getIntersection(ball_positions, best_bounce_index, bounce_frame)
+print(f"Bounce index calculated: {best_bounce_index}")
+point1, point2 = points[0], points[1]
+bounce = (intersection_x, intersection_y)
+result = inOrOut(point1, point2, bounce)
+cv2.putText(final_frame, "The ball is in" if result else "The ball is out", (50, frame_height-100), cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 5)
+# cv2.putText(frame, f'Tennis Racket: {conf:.2f}', (int(xmin), int(ymin - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
 
-if len(ball_positions) >= 6:  # Minimum required for analysis
-    print("Enough positions collected, calculating bounce...")
-    best_bounce_index = calculateBounce(ball_positions)
-    
-    # Use the frame from when the bounce occurred
-    bounce_frame = frames[-1] if best_bounce_index < len(frames) else frames[-1]
-    cv2.imshow('Tennis Ball Tracking', bounce_frame)
+cv2.imshow('Final Frame',final_frame)
 
-    intersection_x, intersection_y = getIntersection(ball_positions, best_bounce_index, bounce_frame)
-    print(f"Bounce index calculated: {best_bounce_index}")
-    point1, point2 = points[0], points[1]
-    bounce = (intersection_x, intersection_y)
-    result = inOrOut(point1, point2, bounce)
-    print("In =", result)
-
-    if best_bounce_index > 0:  # Only proceed if a bounce was found
-        print("Valid bounce found, creating plot...")
-        try:
-            # Convert positions to numpy arrays for plotting
-            positions_array = np.array(ball_positions)
-            print(f"Position array shape: {positions_array.shape}")
-            
-            # Prepare data for plotting
-            ballx_before = positions_array[:best_bounce_index+1, 0]
-            bally_before = positions_array[:best_bounce_index+1, 1]
-            ballx_after = positions_array[best_bounce_index:, 0]
-            bally_after = positions_array[best_bounce_index:, 1]
-
-            for i in range(len(positions_array)):
-                print("positions array: ", positions_array[i])
-
-            print(f"Before bounce points: {len(ballx_before)}")
-            print(f"After bounce points: {len(ballx_after)}")
-
-            # Create the plot
-            plt.figure(figsize=(12, 6))
-
-            # Plot original points first
-            plt.scatter(ballx_before, bally_before, color='blue', alpha=0.5, label='Before Bounce')
-            plt.scatter(ballx_after, bally_after, color='red', alpha=0.5, label='After Bounce')
-
-            # Mark the bounce point
-            bounce_point = positions_array[best_bounce_index]
-            #bounce_pointx, bounce_pointy = getIntersection(ball_positions) 
-            # plt.plot(bounce_pointx, bounce_pointy, 'go', markersize=12, label='Bounce Point')
-
-            # Customize the plot
-            plt.title('Tennis Ball Trajectory')
-            plt.xlabel('X Position (pixels)')
-            plt.ylabel('Y Position (pixels)')
-            plt.grid(True)
-            plt.legend()
-
-            # Invert y-axis
-            plt.gca().invert_yaxis()
-
-            print("Plot created, attempting to show...")
-            plt.show(block=True)  # Adding block=True to ensure plot stays visible
-            print("Plot should be visible now")
-
-        except Exception as e:
-            print(f"Error during plotting: {str(e)}")
-
-        if intersection_x is not None and intersection_y is not None:
-            # Process the intersection point
-            print(f"Intersection found at ({intersection_x}, {intersection_y})")
-        else:
-            print("No valid intersection found")
-    else:
-        print("No valid bounce point found")
-else:
-    print("Not enough ball positions collected for analysis")
-
-print("Program ending...")
-
+cv2.waitKey(0)
 # Clean up
 cap.release()
 cv2.destroyAllWindows()
