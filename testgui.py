@@ -353,6 +353,7 @@ class MainWindow(QMainWindow):
 
         self.select_points_button = QPushButton("Select Points", self)
         self.select_points_button.clicked.connect(self.select_points)
+        self.select_points_button.setEnabled(False)  # Initially disabled
         button_layout.addWidget(self.select_points_button)
 
         self.process_video_button = QPushButton("Process Video", self)
@@ -477,12 +478,12 @@ class MainWindow(QMainWindow):
         video_path, _ = QFileDialog.getOpenFileName(self, "Select Video File", "", "Video Files (*.mp4 *.avi *.mov);;All Files (*)", options=options)
         if video_path:
             print(f"Selected video path: {video_path}")
-            self.process_video_button.setEnabled(True)  # Enable processing button if a video is selected
-        # Open the video file using OpenCV
+
         self.cap = cv2.VideoCapture(video_path)
 
         self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.select_points_button.setEnabled(True)
         
 
 
